@@ -11,8 +11,10 @@ Polymarket prediction market data.
 
 import argparse
 import json
+import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import requests
 
@@ -54,7 +56,65 @@ def format_volume(volume) -> str:
         return str(volume)
 
 
-def format_market(market: dict) -> str:
+def format_change(change) -> str:
+    """Format price change with arrow."""
+    if change is None:
+        return ""
+    try:
+        c = float(change) * 100
+        if c > 0:
+            return f"↑{c:.1f}%"
+        elif c < 0:
+            return f"↓{abs(c):.1f}%"
+        else:
+            return "→0%"
+    except:
+        return ""
+
+
+def format_time_remaining(end_date: str) -> str:
+    """Format time remaining until end date."""
+    if not end_date:
+        return ""
+    try:
+        dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        now = datetime.now(timezone.utc)
+        delta = dt - now
+        
+        if delta.days < 0:
+            return "Ended"
+        elif delta.days == 0:
+            hours = delta.seconds // 3600
+            if hours == 0:
+                mins = delta.seconds // 60
+                return f"Ends in {mins}m"
+            return f"Ends in {hours}h"
+        elif delta.days == 1:
+            return "Ends tomorrow"
+        elif delta.days < 7:
+            return f"Ends in {delta.days}d"
+        elif delta.days < 30:
+            weeks = delta.days // 7
+            return f"Ends in {weeks}w"
+        else:
+            return dt.strftime('%b %d, %Y')
+    except:
+        return ""
+
+
+def extract_slug_from_url(url_or_slug: str) -> str:
+    """Extract slug from Polymarket URL or return as-is if already a slug."""
+    if 'polymarket.com' in url_or_slug:
+        parsed = urlparse(url_or_slug)
+        path = parsed.path.strip('/')
+        # /event/slug-here -> slug-here
+        if path.startswith('event/'):
+            return path.replace('event/', '')
+        return path
+    return url_or_slug
+
+
+def format_market(market: dict, verbose: bool = False) -> str:
     """Format a single market for display."""
     lines = []
     
@@ -62,27 +122,57 @@ def format_market(market: dict) -> str:
     lines.append(f"📊 **{question}**")
     
     # Prices
-    outcomes = market.get('outcomes', [])
-    if outcomes and len(outcomes) >= 2:
-        prices = market.get('outcomePrices', [])
+    prices = market.get('outcomePrices')
+    if prices:
+        if isinstance(prices, str):
+            try:
+                prices = json.loads(prices)
+            except:
+                prices = None
+        
         if prices and len(prices) >= 2:
-            lines.append(f"   Yes: {format_price(prices[0])} | No: {format_price(prices[1])}")
-    elif market.get('bestBid') or market.get('bestAsk'):
-        lines.append(f"   Bid: {format_price(market.get('bestBid'))} | Ask: {format_price(market.get('bestAsk'))}")
+            yes_price = format_price(prices[0])
+            no_price = format_price(prices[1])
+            
+            # Add price changes if available
+            day_change = format_change(market.get('oneDayPriceChange'))
+            change_str = f" ({day_change})" if day_change else ""
+            
+            lines.append(f"   Yes: {yes_price}{change_str} | No: {no_price}")
+    
+    # Bid/ask spread (liquidity indicator)
+    bid = market.get('bestBid')
+    ask = market.get('bestAsk')
+    if bid is not None and ask is not None:
+        spread = float(ask) - float(bid)
+        if spread > 0:
+            lines.append(f"   Spread: {spread*100:.1f}% (Bid: {format_price(bid)} / Ask: {format_price(ask)})")
     
     # Volume
     volume = market.get('volume') or market.get('volumeNum')
     if volume:
-        lines.append(f"   Volume: {format_volume(volume)}")
+        vol_str = f"   Volume: {format_volume(volume)}"
+        vol_24h = market.get('volume24hr')
+        if vol_24h and float(vol_24h) > 0:
+            vol_str += f" (24h: {format_volume(vol_24h)})"
+        lines.append(vol_str)
     
-    # End date
-    end_date = market.get('endDate') or market.get('end_date_iso')
-    if end_date:
-        try:
-            dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-            lines.append(f"   Ends: {dt.strftime('%b %d, %Y')}")
-        except:
-            pass
+    # Time remaining
+    end_date = market.get('endDate') or market.get('endDateIso')
+    time_left = format_time_remaining(end_date)
+    if time_left:
+        lines.append(f"   ⏰ {time_left}")
+    
+    # Verbose mode extras
+    if verbose:
+        week_change = format_change(market.get('oneWeekPriceChange'))
+        month_change = format_change(market.get('oneMonthPriceChange'))
+        if week_change or month_change:
+            lines.append(f"   📈 1w: {week_change or 'N/A'} | 1m: {month_change or 'N/A'}")
+        
+        liquidity = market.get('liquidityNum') or market.get('liquidity')
+        if liquidity:
+            lines.append(f"   💧 Liquidity: {format_volume(liquidity)}")
     
     # Slug for reference
     slug = market.get('slug') or market.get('market_slug')
@@ -92,7 +182,7 @@ def format_market(market: dict) -> str:
     return '\n'.join(lines)
 
 
-def format_event(event: dict) -> str:
+def format_event(event: dict, show_all_markets: bool = False) -> str:
     """Format an event with its markets."""
     lines = []
     
@@ -102,30 +192,66 @@ def format_event(event: dict) -> str:
     # Event-level info
     volume = event.get('volume')
     if volume:
-        lines.append(f"   Total Volume: {format_volume(volume)}")
+        vol_str = f"   Volume: {format_volume(volume)}"
+        vol_24h = event.get('volume24hr')
+        if vol_24h and float(vol_24h) > 0:
+            vol_str += f" (24h: {format_volume(vol_24h)})"
+        lines.append(vol_str)
     
-    # Markets in this event
+    # Time remaining
+    end_date = event.get('endDate')
+    time_left = format_time_remaining(end_date)
+    if time_left:
+        lines.append(f"   ⏰ {time_left}")
+    
+    # Markets in this event - sort by price descending
     markets = event.get('markets', [])
     if markets:
-        lines.append(f"   Markets: {len(markets)}")
-        for m in markets[:5]:  # Show first 5
-            q = m.get('question', m.get('groupItemTitle', ''))
+        # Parse and sort markets by Yes price
+        market_prices = []
+        for m in markets:
             prices = m.get('outcomePrices')
             if prices:
-                # Could be string or list
                 if isinstance(prices, str):
                     try:
                         prices = json.loads(prices)
                     except:
-                        pass
-                if isinstance(prices, list) and len(prices) >= 1:
-                    lines.append(f"   • {q}: {format_price(prices[0])}")
+                        prices = []
+                if prices and len(prices) >= 1:
+                    try:
+                        yes_price = float(prices[0])
+                    except:
+                        yes_price = 0
                 else:
-                    lines.append(f"   • {q}")
+                    yes_price = 0
             else:
-                lines.append(f"   • {q}")
-        if len(markets) > 5:
-            lines.append(f"   ... and {len(markets) - 5} more")
+                yes_price = 0
+            
+            # Skip inactive markets with 0 volume
+            if not m.get('active', True) and m.get('volumeNum', 0) == 0:
+                continue
+                
+            market_prices.append((m, yes_price))
+        
+        # Sort by price descending
+        market_prices.sort(key=lambda x: x[1], reverse=True)
+        
+        lines.append(f"   Markets: {len(market_prices)}")
+        
+        display_count = len(market_prices) if show_all_markets else min(10, len(market_prices))
+        for m, price in market_prices[:display_count]:
+            name = m.get('groupItemTitle') or m.get('question', '')[:40]
+            vol = m.get('volumeNum', 0)
+            day_change = format_change(m.get('oneDayPriceChange'))
+            change_str = f" {day_change}" if day_change else ""
+            
+            if price > 0:
+                lines.append(f"   • {name}: {format_price(price)}{change_str} ({format_volume(vol)})")
+            else:
+                lines.append(f"   • {name}")
+        
+        if len(market_prices) > display_count:
+            lines.append(f"   ... and {len(market_prices) - display_count} more")
     
     slug = event.get('slug')
     if slug:
@@ -152,132 +278,204 @@ def cmd_trending(args):
         print()
 
 
-def cmd_search(args):
-    """Search markets."""
-    # Use the markets endpoint with text search
+def cmd_featured(args):
+    """Get featured markets."""
     params = {
         'closed': 'false',
+        'featured': 'true',
         'limit': args.limit
     }
     
-    # Try search endpoint first
+    data = fetch('/events', params)
+    
+    print(f"⭐ **Featured Markets**\n")
+    
+    if not data:
+        # Fallback to high volume
+        params = {
+            'order': 'volume',
+            'ascending': 'false',
+            'closed': 'false',
+            'limit': args.limit
+        }
+        data = fetch('/events', params)
+        print("(Showing highest volume markets)\n")
+    
+    for event in data:
+        print(format_event(event))
+        print()
+
+
+def cmd_search(args):
+    """Search markets with fuzzy matching."""
+    query = args.query.lower()
+    
+    # First try slug-based lookup
+    slug_guess = query.replace(' ', '-')
     try:
-        resp = requests.get(f"{BASE_URL}/search", params={'query': args.query, 'limit': args.limit}, timeout=30)
-        if resp.status_code == 200:
-            data = resp.json()
-            events = data if isinstance(data, list) else data.get('events', data.get('markets', []))
-            
-            print(f"🔍 **Search: '{args.query}'**\n")
-            
-            if not events:
-                print("No markets found.")
-                return
-            
-            for item in events[:args.limit]:
-                if 'markets' in item:
-                    print(format_event(item))
-                else:
-                    print(format_market(item))
+        data = fetch('/events', {'slug': slug_guess, 'closed': 'false'})
+        if data:
+            print(f"🔍 **Found: '{args.query}'**\n")
+            for event in data[:args.limit]:
+                print(format_event(event, show_all_markets=args.all))
                 print()
             return
     except:
         pass
     
-    # Fallback: get all events and filter
-    data = fetch('/events', {'closed': 'false', 'limit': 100})
-    
-    query_lower = args.query.lower()
-    matches = []
-    
-    for event in data:
-        title = event.get('title', '').lower()
-        desc = event.get('description', '').lower()
-        if query_lower in title or query_lower in desc:
-            matches.append(event)
-            continue
-        # Check markets
-        for m in event.get('markets', []):
-            q = m.get('question', '').lower()
-            if query_lower in q:
+    # Try partial slug match
+    try:
+        data = fetch('/events', {'closed': 'false', 'limit': 200})
+        matches = []
+        
+        for event in data:
+            slug = event.get('slug', '').lower()
+            title = event.get('title', '').lower()
+            desc = event.get('description', '').lower()
+            
+            # Check slug, title, description
+            if query in slug or query in title or query in desc:
                 matches.append(event)
-                break
-    
-    print(f"🔍 **Search: '{args.query}'**\n")
-    
-    if not matches:
-        print("No markets found.")
-        return
-    
-    for event in matches[:args.limit]:
-        print(format_event(event))
-        print()
+                continue
+            
+            # Check individual markets
+            for m in event.get('markets', []):
+                q = m.get('question', '').lower()
+                item = m.get('groupItemTitle', '').lower()
+                if query in q or query in item:
+                    matches.append(event)
+                    break
+        
+        print(f"🔍 **Search: '{args.query}'**\n")
+        
+        if not matches:
+            print("No markets found.")
+            print(f"\nTip: Try the full slug from the URL, e.g.:")
+            print(f"  polymarket event where-will-giannis-be-traded")
+            return
+        
+        for event in matches[:args.limit]:
+            print(format_event(event, show_all_markets=args.all))
+            print()
+            
+    except Exception as e:
+        print(f"Search error: {e}")
 
 
 def cmd_event(args):
-    """Get specific event by slug."""
+    """Get specific event by slug or URL."""
+    slug = extract_slug_from_url(args.slug)
+    
     try:
-        data = fetch(f'/events/slug/{args.slug}')
+        # Try direct slug lookup
+        data = fetch('/events', {'slug': slug})
         
-        if isinstance(data, list) and data:
-            data = data[0]
+        if not data:
+            # Try partial match
+            all_events = fetch('/events', {'closed': 'false', 'limit': 200})
+            slug_lower = slug.lower()
+            matches = [e for e in all_events if slug_lower in e.get('slug', '').lower()]
+            
+            if matches:
+                data = matches
+            else:
+                print(f"❌ Event not found: {slug}")
+                print(f"\nTip: Search for it first:")
+                print(f"  polymarket search {slug.split('-')[0]}")
+                return
         
-        print(format_event(data))
+        event = data[0] if isinstance(data, list) and data else data
         
-        # Show more detail on markets
-        markets = data.get('markets', [])
-        if markets:
-            print(f"\n📊 **All Markets:**\n")
+        print(format_event(event, show_all_markets=True))
+        
+    except requests.HTTPError as e:
+        if e.response.status_code == 404:
+            print(f"❌ Event not found: {slug}")
+        else:
+            raise
+
+
+def cmd_market(args):
+    """Get specific market outcome within an event."""
+    slug = extract_slug_from_url(args.slug)
+    outcome = args.outcome.lower() if args.outcome else None
+    
+    try:
+        data = fetch('/events', {'slug': slug})
+        
+        if not data:
+            print(f"❌ Event not found: {slug}")
+            return
+        
+        event = data[0] if isinstance(data, list) else data
+        markets = event.get('markets', [])
+        
+        if not outcome:
+            # Show all markets
+            print(f"🎯 **{event.get('title')}**\n")
             for m in markets:
-                print(format_market(m))
+                print(format_market(m, verbose=True))
                 print()
+            return
+        
+        # Find matching market
+        for m in markets:
+            name = m.get('groupItemTitle', '').lower()
+            question = m.get('question', '').lower()
+            if outcome in name or outcome in question:
+                print(format_market(m, verbose=True))
+                return
+        
+        print(f"❌ Outcome '{args.outcome}' not found")
+        print(f"\nAvailable outcomes:")
+        for m in markets[:15]:
+            name = m.get('groupItemTitle') or m.get('question', '')[:40]
+            print(f"  • {name}")
                 
     except requests.HTTPError as e:
         if e.response.status_code == 404:
-            print(f"❌ Event not found: {args.slug}")
+            print(f"❌ Event not found: {slug}")
         else:
             raise
 
 
 def cmd_category(args):
     """Get markets by category."""
-    # Map friendly names to tag IDs
     categories = {
-        'politics': 'politics',
-        'crypto': 'crypto',
-        'sports': 'sports',
-        'tech': 'tech',
-        'entertainment': 'entertainment',
-        'science': 'science',
-        'business': 'business'
+        'politics': ['politics', 'election', 'trump', 'biden', 'congress'],
+        'crypto': ['crypto', 'bitcoin', 'ethereum', 'btc', 'eth'],
+        'sports': ['sports', 'nba', 'nfl', 'mlb', 'soccer'],
+        'tech': ['tech', 'ai', 'apple', 'google', 'microsoft'],
+        'entertainment': ['entertainment', 'movie', 'oscar', 'grammy'],
+        'science': ['science', 'space', 'nasa', 'climate'],
+        'business': ['business', 'fed', 'interest', 'stock', 'market']
     }
     
-    tag = categories.get(args.category.lower(), args.category)
+    tags = categories.get(args.category.lower(), [args.category.lower()])
     
-    # Try to get events with this tag
-    params = {
+    data = fetch('/events', {
         'closed': 'false',
-        'limit': args.limit,
+        'limit': 100,
         'order': 'volume24hr',
         'ascending': 'false'
-    }
+    })
     
-    data = fetch('/events', params)
-    
-    # Filter by category in title/tags
     matches = []
-    tag_lower = tag.lower()
     for event in data:
         title = event.get('title', '').lower()
-        tags = [t.get('label', '').lower() for t in event.get('tags', [])]
-        if tag_lower in title or tag_lower in ' '.join(tags):
-            matches.append(event)
+        event_tags = [t.get('label', '').lower() for t in event.get('tags', [])]
+        
+        for tag in tags:
+            if tag in title or tag in ' '.join(event_tags):
+                matches.append(event)
+                break
     
     print(f"📁 **Category: {args.category.title()}**\n")
     
     if not matches:
-        # Show all instead
-        print(f"(No exact matches for '{tag}', showing trending)\n")
-        matches = data[:args.limit]
+        print(f"No markets found for '{args.category}'")
+        print(f"\nAvailable categories: politics, crypto, sports, tech, entertainment, science, business")
+        return
     
     for event in matches[:args.limit]:
         print(format_event(event))
@@ -288,19 +486,29 @@ def main():
     parser = argparse.ArgumentParser(description="Polymarket prediction markets")
     parser.add_argument("--limit", "-l", type=int, default=5, help="Number of results")
     parser.add_argument("--json", "-j", action="store_true", help="Output raw JSON")
+    parser.add_argument("--all", "-a", action="store_true", help="Show all markets in event")
     
     subparsers = parser.add_subparsers(dest="command", required=True)
     
     # Trending
     subparsers.add_parser("trending", help="Get trending markets")
     
+    # Featured
+    subparsers.add_parser("featured", help="Get featured markets")
+    
     # Search
     search_parser = subparsers.add_parser("search", help="Search markets")
     search_parser.add_argument("query", help="Search query")
+    search_parser.add_argument("--all", "-a", action="store_true", help="Show all outcomes")
     
     # Event
-    event_parser = subparsers.add_parser("event", help="Get specific event")
-    event_parser.add_argument("slug", help="Event slug from URL")
+    event_parser = subparsers.add_parser("event", help="Get event by slug or URL")
+    event_parser.add_argument("slug", help="Event slug or polymarket.com URL")
+    
+    # Market (specific outcome)
+    market_parser = subparsers.add_parser("market", help="Get specific market outcome")
+    market_parser.add_argument("slug", help="Event slug or URL")
+    market_parser.add_argument("outcome", nargs="?", help="Outcome name (e.g. 'warriors')")
     
     # Category
     cat_parser = subparsers.add_parser("category", help="Markets by category")
@@ -310,8 +518,10 @@ def main():
     
     commands = {
         "trending": cmd_trending,
+        "featured": cmd_featured,
         "search": cmd_search,
         "event": cmd_event,
+        "market": cmd_market,
         "category": cmd_category,
     }
     
