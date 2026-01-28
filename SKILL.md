@@ -44,6 +44,18 @@ python3 {baseDir}/scripts/polymarket.py category sports
 - "What's the spread on the Fed rate decision?"
 - "Show me the full Giannis trade market"
 
+## Smart Search
+
+Search uses intelligent query expansion:
+- **Synonyms**: "trade" → traded, next team, destination
+- **Sports mappings**: "nba" → basketball; "super bowl" → nfl, championship
+- **Word stems**: "trading" → trade; "winner" → win
+- **Politics**: "election" → president, presidential, vote
+- **Crypto**: "btc" → bitcoin; "eth" → ethereum
+- **Noise removal**: strips "who will", "what are the odds", etc.
+
+Just search naturally - the skill handles the rest.
+
 ## Output Features
 
 Markets show:

@@ -307,31 +307,153 @@ def cmd_featured(args):
 
 
 def expand_query(query: str) -> list:
-    """Expand query with synonyms and variations."""
-    query = query.lower()
-    expansions = [query]
+    """Expand query with synonyms, variations, and smart inference."""
+    query = query.lower().strip()
+    expansions = set([query])
+    words = query.split()
     
-    # Common synonyms
-    synonyms = {
-        'championship': ['champion', 'winner', 'tournament'],
-        'champion': ['championship', 'winner', 'tournament'],
-        'march madness': ['ncaa', 'tournament', 'final four'],
-        'final four': ['ncaa', 'tournament', 'march madness'],
+    # ===== SYNONYM MAPPINGS =====
+    # Sports events
+    sports_events = {
+        'championship': ['champion', 'winner', 'tournament', 'title', 'finals'],
+        'champion': ['championship', 'winner', 'tournament', 'title'],
+        'march madness': ['ncaa', 'tournament', 'final four', 'college basketball'],
+        'final four': ['ncaa', 'tournament', 'march madness', 'semifinal'],
         'ncaa': ['college', 'tournament', 'march madness'],
-        'super bowl': ['nfl', 'championship'],
-        'world series': ['mlb', 'championship'],
-        'stanley cup': ['nhl', 'championship'],
-        'trade': ['traded', 'next team'],
-        'election': ['president', 'presidential'],
+        'super bowl': ['nfl', 'championship', 'football'],
+        'world series': ['mlb', 'championship', 'baseball'],
+        'stanley cup': ['nhl', 'championship', 'hockey'],
+        'nba finals': ['championship', 'basketball', 'nba champion'],
+        'playoffs': ['postseason', 'championship'],
+        'mvp': ['most valuable', 'award'],
     }
     
-    for key, values in synonyms.items():
+    # Player/team actions
+    actions = {
+        'trade': ['traded', 'next team', 'destination', 'move'],
+        'traded': ['trade', 'next team', 'destination'],
+        'sign': ['signed', 'signing', 'contract', 'free agent'],
+        'retire': ['retired', 'retirement'],
+        'win': ['winner', 'won', 'wins', 'winning'],
+        'winner': ['win', 'wins', 'champion'],
+        'beat': ['defeat', 'over', 'vs'],
+    }
+    
+    # Politics
+    politics = {
+        'election': ['president', 'presidential', 'vote', 'elect'],
+        'president': ['election', 'presidential', 'potus'],
+        'senate': ['senator', 'congress'],
+        'congress': ['house', 'senate', 'congressional'],
+        'republican': ['gop', 'rep'],
+        'democrat': ['dem', 'democratic'],
+        'primary': ['nomination', 'nominee'],
+    }
+    
+    # Economics/business
+    economics = {
+        'fed': ['federal reserve', 'interest rate', 'fomc'],
+        'rate cut': ['interest rate', 'fed', 'rate hike'],
+        'rate hike': ['interest rate', 'fed', 'rate cut'],
+        'recession': ['economy', 'gdp', 'downturn'],
+        'inflation': ['cpi', 'prices'],
+        'ipo': ['public', 'listing'],
+        'acquisition': ['acquire', 'bought', 'merger'],
+    }
+    
+    # Crypto
+    crypto = {
+        'bitcoin': ['btc', 'crypto'],
+        'btc': ['bitcoin', 'crypto'],
+        'ethereum': ['eth', 'crypto'],
+        'eth': ['ethereum', 'crypto'],
+        'ath': ['all time high', 'record'],
+        'moon': ['surge', 'rally', 'pump'],
+    }
+    
+    # Tech/AI
+    tech = {
+        'ai': ['artificial intelligence', 'gpt', 'llm', 'chatgpt'],
+        'agi': ['artificial general intelligence', 'ai'],
+        'release': ['launch', 'announce', 'ship'],
+        'iphone': ['apple', 'ios'],
+    }
+    
+    # Combine all mappings
+    all_synonyms = {**sports_events, **actions, **politics, **economics, **crypto, **tech}
+    
+    # ===== LEAGUE/SPORT ASSOCIATIONS =====
+    sport_leagues = {
+        'nba': ['basketball', 'hoops'],
+        'nfl': ['football'],
+        'mlb': ['baseball'],
+        'nhl': ['hockey'],
+        'mls': ['soccer'],
+        'ufc': ['mma', 'fight'],
+        'pga': ['golf'],
+        'atp': ['tennis'],
+        'wta': ['tennis'],
+        'f1': ['formula 1', 'racing'],
+    }
+    
+    # ===== WORD VARIATIONS =====
+    # Common suffixes to strip/add
+    suffixes = [('ing', ''), ('ed', ''), ('er', ''), ('s', ''), ('ment', '')]
+    
+    # ===== EXPANSION LOGIC =====
+    
+    # 1. Apply synonym mappings
+    for key, values in all_synonyms.items():
         if key in query:
             for v in values:
-                expansions.append(query.replace(key, v))
-                expansions.append(v)
+                expansions.add(query.replace(key, v))
+                expansions.add(v)
     
-    return list(set(expansions))
+    # 2. Add league/sport associations
+    for league, sports in sport_leagues.items():
+        if league in query:
+            for s in sports:
+                expansions.add(query.replace(league, s))
+                expansions.add(s)
+        for s in sports:
+            if s in query:
+                expansions.add(league)
+    
+    # 3. Add word stem variations
+    for word in words:
+        if len(word) >= 4:
+            for old_suffix, new_suffix in suffixes:
+                if word.endswith(old_suffix):
+                    stem = word[:-len(old_suffix)] + new_suffix
+                    if len(stem) >= 3:
+                        expansions.add(stem)
+    
+    # 4. Add individual words for multi-word queries
+    if len(words) >= 2:
+        for word in words:
+            if len(word) >= 3:
+                expansions.add(word)
+    
+    # 5. Generate slug-style version
+    slug_version = query.replace(' ', '-')
+    expansions.add(slug_version)
+    
+    # 6. Handle common abbreviations
+    abbreviations = {
+        'who will': '',
+        'will': '',
+        'what are': '',
+        'the odds': 'odds',
+        "what's": '',
+        'whats': '',
+    }
+    for phrase, replacement in abbreviations.items():
+        if phrase in query:
+            cleaned = query.replace(phrase, replacement).strip()
+            if cleaned:
+                expansions.add(cleaned)
+    
+    return list(expansions)
 
 
 def cmd_search(args):
