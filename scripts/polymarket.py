@@ -306,9 +306,38 @@ def cmd_featured(args):
         print()
 
 
+def expand_query(query: str) -> list:
+    """Expand query with synonyms and variations."""
+    query = query.lower()
+    expansions = [query]
+    
+    # Common synonyms
+    synonyms = {
+        'championship': ['champion', 'winner', 'tournament'],
+        'champion': ['championship', 'winner', 'tournament'],
+        'march madness': ['ncaa', 'tournament', 'final four'],
+        'final four': ['ncaa', 'tournament', 'march madness'],
+        'ncaa': ['college', 'tournament', 'march madness'],
+        'super bowl': ['nfl', 'championship'],
+        'world series': ['mlb', 'championship'],
+        'stanley cup': ['nhl', 'championship'],
+        'trade': ['traded', 'next team'],
+        'election': ['president', 'presidential'],
+    }
+    
+    for key, values in synonyms.items():
+        if key in query:
+            for v in values:
+                expansions.append(query.replace(key, v))
+                expansions.append(v)
+    
+    return list(set(expansions))
+
+
 def cmd_search(args):
-    """Search markets with fuzzy matching."""
+    """Search markets with fuzzy matching and synonym expansion."""
     query = args.query.lower()
+    queries = expand_query(query)
     
     # First try slug-based lookup
     slug_guess = query.replace(' ', '-')
@@ -323,9 +352,9 @@ def cmd_search(args):
     except:
         pass
     
-    # Try partial slug match
+    # Try partial slug match with expanded queries
     try:
-        data = fetch('/events', {'closed': 'false', 'limit': 200})
+        data = fetch('/events', {'closed': 'false', 'limit': 500})
         matches = []
         
         for event in data:
@@ -333,17 +362,27 @@ def cmd_search(args):
             title = event.get('title', '').lower()
             desc = event.get('description', '').lower()
             
-            # Check slug, title, description
-            if query in slug or query in title or query in desc:
-                matches.append(event)
+            # Check slug, title, description against all query variations
+            found = False
+            for q in queries:
+                if q in slug or q in title or q in desc:
+                    matches.append(event)
+                    found = True
+                    break
+            
+            if found:
                 continue
             
             # Check individual markets
             for m in event.get('markets', []):
-                q = m.get('question', '').lower()
+                mq = m.get('question', '').lower()
                 item = m.get('groupItemTitle', '').lower()
-                if query in q or query in item:
-                    matches.append(event)
+                for q in queries:
+                    if q in mq or q in item:
+                        matches.append(event)
+                        found = True
+                        break
+                if found:
                     break
         
         print(f"🔍 **Search: '{args.query}'**\n")
