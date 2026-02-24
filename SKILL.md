@@ -1,6 +1,6 @@
 ---
 name: polymarket
-description: Query Polymarket prediction markets - check odds, trending markets, search events, track prices.
+description: Query and trade on Polymarket prediction markets - check odds, trending markets, search events, view order books, place trades, and manage positions.
 homepage: https://polymarket.com
 metadata: {"clawdbot":{"emoji":"📊"}}
 ---
