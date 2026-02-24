@@ -1,4 +1,4 @@
-# 📊 Polymarket Skill for Clawdbot
+# 📊 Polymarket Skill for OpenClaw
 
 Browse prediction markets, check odds, and trade on [Polymarket](https://polymarket.com) directly from your AI agent.
 
