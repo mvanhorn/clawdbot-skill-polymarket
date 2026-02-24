@@ -16,7 +16,11 @@ Browse prediction markets, check odds, and trade on [Polymarket](https://polymar
 ### Install the skill
 
 ```bash
-openclaw skill install mvanhorn/clawdbot-skill-polymarket
+# Clone directly from GitHub
+git clone https://github.com/mvanhorn/clawdbot-skill-polymarket.git ~/.openclaw/skills/polymarket
+
+# Or if you use a custom skills directory
+git clone https://github.com/mvanhorn/clawdbot-skill-polymarket.git /path/to/your/skills/polymarket
 ```
 
 ### Browse markets (works immediately, no setup)
