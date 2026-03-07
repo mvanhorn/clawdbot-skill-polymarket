@@ -7,7 +7,7 @@ license: MIT
 repository: https://github.com/mvanhorn/clawdbot-skill-polymarket
 homepage: https://polymarket.com
 metadata:
-  clawdbot:
+  openclaw:
     emoji: "📊"
     tags:
       - prediction-markets
