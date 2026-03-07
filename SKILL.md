@@ -1,8 +1,20 @@
 ---
 name: polymarket
-description: Query and trade on Polymarket prediction markets - check odds, trending markets, search events, view order books, place trades, and manage positions.
+version: "1.1.0"
+description: Query and trade on Polymarket prediction markets — check odds, trending markets, search events, view order books, place trades, and manage positions. Now available to US developers.
+author: mvanhorn
+license: MIT
+repository: https://github.com/mvanhorn/clawdbot-skill-polymarket
 homepage: https://polymarket.com
-metadata: {"clawdbot":{"emoji":"📊"}}
+metadata:
+  clawdbot:
+    emoji: "📊"
+    tags:
+      - prediction-markets
+      - polymarket
+      - trading
+      - odds
+      - betting
 ---
 
 # Polymarket
