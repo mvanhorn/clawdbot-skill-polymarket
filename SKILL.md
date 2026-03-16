@@ -1,7 +1,7 @@
 ---
 name: polymarket
-version: "2.0.0"
-description: "Polymarket prediction markets at your fingertips - check odds, track portfolios, research markets with AI-powered analysis, compare markets, and trade. Read-only works instantly (no setup). The most comprehensive prediction markets skill on ClawHub."
+version: "3.0.0"
+description: "Polymarket prediction markets at your fingertips - check odds, track portfolios, research markets with AI-powered analysis, compare markets, and trade. Covers all 4 Polymarket APIs: Gamma, CLOB, Data API, RTDS WebSocket, and Bridge. Read-only works instantly (no setup). The most comprehensive prediction markets skill on ClawHub."
 author: mvanhorn
 license: MIT
 repository: https://github.com/mvanhorn/clawdbot-skill-polymarket
@@ -23,6 +23,9 @@ metadata:
       - politics
       - sports
       - finance
+      - websocket
+      - bridge
+      - data-api
     triggers:
       - polymarket
       - prediction market
@@ -39,29 +42,44 @@ metadata:
       - trade on polymarket
       - buy shares
       - sell shares
+      - polymarket leaderboard
+      - polymarket deposit
+      - polymarket withdraw
+      - crypto prices live
 ---
 
 # Polymarket
 
-Query [Polymarket](https://polymarket.com) prediction markets and trade from the terminal. Browse odds, research events, compare markets, track your portfolio, and execute trades - all through natural language.
+Query [Polymarket](https://polymarket.com) prediction markets and trade from the terminal. Browse odds, research events, compare markets, track your portfolio, stream live data, bridge funds, and execute trades - all through natural language.
+
+Polymarket exposes 4 separate APIs plus the Gamma convenience layer. This skill covers all of them.
 
 ## Setup
 
 **Read-only commands work immediately** (no install needed). Browsing, searching, trending, categories, market research, and comparison mode all use the public Gamma API.
 
-For trading, order books, and price history, install the [Polymarket CLI](https://github.com/Polymarket/polymarket-cli):
+For trading, order books, price history, and advanced features, install the [Polymarket CLI](https://github.com/Polymarket/polymarket-cli) (Rust binary, v0.1.5+):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Polymarket/polymarket-cli/main/install.sh | sh
+brew install polymarket/tap/polymarket-cli
 ```
 
 For trading, set up a wallet:
 
 ```bash
-python3 {baseDir}/scripts/polymarket.py wallet-setup
+polymarket wallet create
+polymarket approve set
 ```
 
 Or manually configure `~/.config/polymarket/config.json` with your private key. See the [CLI docs](https://github.com/Polymarket/polymarket-cli) for details.
+
+The CLI also provides an interactive REPL:
+
+```bash
+polymarket shell
+```
+
+Use `--output json` on any CLI command for machine-readable output suitable for scripting and piping.
 
 ## Commands
 
@@ -214,10 +232,10 @@ python3 {baseDir}/scripts/polymarket.py price-history TOKEN_ID --interval 1h --f
 ### Wallet (CLI required)
 
 ```bash
-python3 {baseDir}/scripts/polymarket.py wallet-setup
-python3 {baseDir}/scripts/polymarket.py wallet-show
-python3 {baseDir}/scripts/polymarket.py wallet-balance
-python3 {baseDir}/scripts/polymarket.py wallet-balance --token TOKEN_ID
+polymarket wallet create
+polymarket wallet show
+polymarket wallet balance
+polymarket wallet balance --token TOKEN_ID
 ```
 
 ### Trading (CLI + wallet required)
@@ -249,7 +267,7 @@ python3 {baseDir}/scripts/polymarket.py --confirm trade sell --token TOKEN_ID --
 # Market order: buy $5 worth at current price
 python3 {baseDir}/scripts/polymarket.py --confirm trade buy --token TOKEN_ID --market-order --amount 5
 
-# Post-only limit order (guaranteed to be a maker order, never takes liquidity)
+# Post-only limit order (rests on book only, never takes liquidity - Jan 2026+)
 python3 {baseDir}/scripts/polymarket.py --confirm trade buy --token TOKEN_ID --price 0.45 --size 20 --post-only
 ```
 
@@ -270,6 +288,102 @@ python3 {baseDir}/scripts/polymarket.py positions
 python3 {baseDir}/scripts/polymarket.py positions --address 0xYOUR_WALLET
 ```
 
+---
+
+## API Reference
+
+Polymarket exposes 4 distinct APIs plus the Gamma convenience layer. Each serves a different purpose.
+
+### 1. Gamma API (gamma-api.polymarket.com) - Public, no auth
+
+The high-level convenience API for browsing and searching markets. Used by all read-only commands.
+
+- **Base URL**: `https://gamma-api.polymarket.com`
+- `GET /events` - List events (params: `order`, `ascending`, `closed`, `limit`, `tag_slug`)
+- `GET /search` - Search markets (params: `query`, `limit`)
+- `GET /events/slug/{slug}` - Event by slug
+- `GET /comments` - List and filter comments on markets
+- `GET /profiles/{address}` - Public user profiles
+- `GET /series` - Grouped event collections (e.g., "2028 Election" series)
+- `GET /sports` - Sports metadata including teams, matches, and resolution criteria
+- **GraphQL**: `POST /query` - Full GraphQL endpoint with subscription support
+
+### 2. CLOB API (clob.polymarket.com) - Trading
+
+The Central Limit Order Book API for all trading operations. Wrapped by the Polymarket CLI.
+
+- **Base URL**: `https://clob.polymarket.com`
+- `GET /prices-history` - Historical prices (intervals: `1m`, `1h`, `6h`, `1d`, `1w`, `max`)
+- `GET /spread` - Bid-ask spread for a token
+- `GET /fee-rate` - Fee structure details
+- `GET /rewards` - Daily maker/taker earnings
+- `POST /order` - Place an order
+- `POST /orders` - Batch orders (up to 15 per request)
+- `DELETE /order/{id}` - Cancel an order
+- **Order scoring** - Check maker rebate eligibility before placing orders
+- **Post-Only orders** (Jan 2026) - Orders that rest on the book only, never cross the spread
+- **Heartbeat API** (Jan 2026):
+  - `POST /heartbeat` - Must send within 10 seconds or all open orders auto-cancel
+  - Used by market makers to maintain order presence
+  - If heartbeat lapses, all resting orders for that API key are cancelled
+
+### 3. Data API (data-api.polymarket.com) - Portfolio & Analytics
+
+The dedicated API for portfolio tracking, trade history, and market analytics. No auth needed for public endpoints.
+
+- **Base URL**: `https://data-api.polymarket.com`
+- `GET /positions?user={address}` - Current open positions
+  - Sort by: `TOKENS`, `CURRENT`, `INITIAL`, `CASHPNL`, `PERCENTPNL`
+- `GET /closed-positions?user={address}` - Historical closed positions
+- `GET /activity?user={address}` - Activity feed
+  - Types: `TRADE`, `SPLIT`, `MERGE`, `REDEEM`, `REWARD`
+- `GET /value?user={address}` - Portfolio valuation in USD
+- `GET /trades` - Trade history
+  - Filter by: `user`, `market`, `side`
+  - Max 500 results per page
+- `GET /holders?market={conditionId}` - Top token holders for a market
+- `GET /oi` - Open interest across markets
+- `GET /volume` - Trading volume across markets
+- `GET /leaderboard` - Trader rankings (configurable time period)
+
+Use the Data API for portfolio dashboards and analytics. It provides richer position data than the CLOB API, including P&L calculations and activity history.
+
+### 4. RTDS WebSocket (wss://ws-live-data.polymarket.com) - Real-time Streaming
+
+Real-time data streaming via WebSocket. Subscribe to topics for live updates without polling.
+
+- **URL**: `wss://ws-live-data.polymarket.com`
+- **Protocol**: JSON messages over WebSocket
+- **Topics**:
+  - `comments` - Real-time comment activity
+    - Events: `comment_created`, `comment_removed`, `reaction_created`, `reaction_removed`
+  - `crypto_prices` - Real-time cryptocurrency prices
+    - Assets: BTC, ETH, SOL, XRP
+    - Sources: Binance + Chainlink oracles
+- **Dynamic subscription management** - Subscribe and unsubscribe to topics on the fly within a single connection
+- Useful for building live dashboards, monitoring comment sentiment, or tracking crypto prices that feed into 5-minute crypto markets
+
+### 5. Bridge API (bridge.polymarket.com) - Cross-chain Deposits & Withdrawals
+
+Bridge funds into and out of Polymarket across multiple chains.
+
+- **Base URL**: `https://bridge.polymarket.com`
+- `POST /deposit` - Generate deposit addresses
+  - Supported chains: EVM (Ethereum, Polygon, Arbitrum, etc.), Solana, Bitcoin
+  - Returns a unique deposit address for the selected chain
+- `POST /withdraw` (Jan 2026) - Bridge USDC.e to any supported chain
+- `GET /supported-assets` - List all supported assets and chains
+- `GET /quote` - Get cross-chain bridging quotes (fees, estimated time)
+
+Use the Bridge API when a user needs to move funds in or out of Polymarket without leaving the terminal.
+
+---
+
+## New Market Types
+
+- **5-minute crypto markets** (Feb 2026) - Ultra-short-duration markets on BTC/ETH/SOL price movements. Fed by RTDS crypto_prices data.
+- **Sports markets** - Dedicated sports metadata via Gamma `/sports` endpoint with team info, match schedules, and resolution criteria.
+
 ## Error Recovery
 
 ### API Errors (Gamma API)
@@ -281,16 +395,39 @@ If the Gamma API returns an error or is unreachable:
 - **Connection Error**: Check internet connectivity. The API endpoint is `https://gamma-api.polymarket.com`.
 - **Empty Results**: The search might be too specific. Suggest broader search terms or browse by category instead.
 
+### Data API Errors
+
+- **HTTP 400 (Bad Request)**: Check the `user` address format (must be a valid Ethereum address) or sort parameter spelling.
+- **Empty positions**: The address may have no open positions, or the address format may be wrong. Try with and without checksum casing.
+- **Pagination**: Trades endpoint maxes at 500 per page. Use cursor-based pagination for full history.
+
+### CLOB API Errors
+
+- **Heartbeat timeout**: If using the Heartbeat API and the connection lapses for >10 seconds, all orders auto-cancel. Reconnect and re-place orders.
+- **Post-Only rejection**: A post-only order that would cross the spread is rejected instead of filling. Adjust price to rest on the book.
+- **Batch limit**: Maximum 15 orders per batch request. Split larger batches.
+
+### Bridge API Errors
+
+- **Unsupported chain**: Check `/supported-assets` for current chain support.
+- **Quote expired**: Bridge quotes have a TTL. Fetch a fresh quote before executing.
+- **Minimum amount**: Some chains have minimum deposit/withdrawal amounts.
+
 ### CLI Errors
 
 If the Polymarket CLI returns an error:
 
-- **"CLI not installed"**: Direct the user to install with the curl command above.
-- **"Config not found"**: The user needs to run `wallet-setup` first.
+- **"CLI not installed"**: Install with `brew install polymarket/tap/polymarket-cli`.
+- **"Config not found"**: The user needs to run `polymarket wallet create` first.
 - **"Insufficient balance"**: Show current balance and the required amount.
 - **"Order rejected"**: The price may be outside valid range (0-1) or the market may be closed/resolved.
 - **"Approval needed"**: Some operations require a one-time on-chain approval. Run: `polymarket approve set`
 - **Timeout**: CLI commands have a 30-second timeout. If a command times out, it may be a network issue or the Polygon RPC may be slow.
+
+### WebSocket Errors
+
+- **Connection dropped**: RTDS WebSocket may drop on network changes. Reconnect and re-subscribe to topics.
+- **Invalid topic**: Check available topics. Only `comments` and `crypto_prices` are currently supported.
 
 ### Market Not Found
 
@@ -303,7 +440,7 @@ If a market slug or event is not found:
 
 ### Authentication Issues
 
-- **No wallet configured**: Guide the user through `wallet-setup`
+- **No wallet configured**: Guide the user through `polymarket wallet create`
 - **Wrong network**: Polymarket uses Polygon. Ensure the wallet is on the correct network.
 - **Insufficient MATIC**: On-chain operations need MATIC for gas. Direct user to bridge or purchase MATIC.
 
@@ -385,30 +522,39 @@ consensus (65-75% for a cut). The slight premium on Polymarket
 may reflect retail sentiment skewing more dovish.
 ```
 
-### Example 4: Portfolio check
+### Example 4: Portfolio via Data API
 
 **User**: "How's my Polymarket portfolio doing?"
 
+Use the Data API for rich portfolio data:
+
 ```bash
-python3 {baseDir}/scripts/polymarket.py positions
-python3 {baseDir}/scripts/polymarket.py wallet-balance
-python3 {baseDir}/scripts/polymarket.py orders
+# Portfolio value
+curl -s "https://data-api.polymarket.com/value?user=0xYOUR_WALLET"
+
+# Open positions sorted by P&L
+curl -s "https://data-api.polymarket.com/positions?user=0xYOUR_WALLET&sortBy=CASHPNL"
+
+# Recent activity
+curl -s "https://data-api.polymarket.com/activity?user=0xYOUR_WALLET"
 ```
 
 **Output**:
 ```
 Portfolio Dashboard
 
-Positions:
+Portfolio Value: $289.80
+
+Positions (sorted by P&L):
   Fed Rate Cut (Yes)     100 shares @ $0.65    Current: $0.72    P&L: +$7.00
   BTC > $150K July (No)   50 shares @ $0.60    Current: $0.71    P&L: +$5.50
 
+Recent Activity:
+  TRADE  Bought 25 Fed Rate Cut (Yes) @ $0.68    2 hours ago
+  REDEEM Claimed $12.40 from resolved market     1 day ago
+
 USDC Balance: $142.30
-
-Open Orders:
-  Buy 25 shares Fed Rate Cut (Yes) @ $0.68    Status: Open
-
-Total Value: ~$289.80
+Open Orders: 1 pending
 ```
 
 ### Example 5: Side-by-side comparison
@@ -452,21 +598,54 @@ Buy Limit Order (PREVIEW)
    This involves REAL MONEY on Polygon.
 ```
 
-### Example 7: Search by topic
+### Example 7: Leaderboard and top holders
 
-**User**: "Any crypto markets on Polymarket?"
+**User**: "Who are the top Polymarket traders?"
 
 ```bash
-python3 {baseDir}/scripts/polymarket.py category crypto --limit 10
+# Trader leaderboard
+curl -s "https://data-api.polymarket.com/leaderboard"
+
+# Top holders for a specific market
+curl -s "https://data-api.polymarket.com/holders?market=CONDITION_ID"
 ```
 
-### Example 8: Cancel and reorder
+### Example 8: Bridge funds in
 
-**User**: "Cancel all my orders and place a new one"
+**User**: "I want to deposit funds to Polymarket from Ethereum"
 
 ```bash
-python3 {baseDir}/scripts/polymarket.py --confirm orders --cancel all
-python3 {baseDir}/scripts/polymarket.py --confirm trade buy --token TOKEN_ID --price 0.55 --size 30
+# Check supported assets
+curl -s "https://bridge.polymarket.com/supported-assets"
+
+# Get a quote
+curl -s -X POST "https://bridge.polymarket.com/deposit" \
+  -H "Content-Type: application/json" \
+  -d '{"chain": "ethereum", "asset": "USDC"}'
+```
+
+### Example 9: Historical price analysis
+
+**User**: "Show me the price history for this market over the past week"
+
+```bash
+# Via CLOB API
+curl -s "https://clob.polymarket.com/prices-history?tokenID=TOKEN_ID&interval=1d&fidelity=7"
+
+# Or via CLI
+polymarket price-history TOKEN_ID --interval 1d --output json
+```
+
+### Example 10: Spread and fee check
+
+**User**: "What's the spread on this market?"
+
+```bash
+# Bid-ask spread
+curl -s "https://clob.polymarket.com/spread?tokenID=TOKEN_ID"
+
+# Fee rate
+curl -s "https://clob.polymarket.com/fee-rate"
 ```
 
 ## Safety Notes
@@ -476,21 +655,11 @@ python3 {baseDir}/scripts/polymarket.py --confirm trade buy --token TOKEN_ID --p
 - **The CLI is experimental.** The Polymarket team warns: "Use at your own risk and do not use with large amounts of funds."
 - **Private key security.** Your key is stored in `~/.config/polymarket/config.json`. Never share it, never commit it.
 - **Gas fees.** On-chain operations (approvals, splits, redeems) require MATIC for gas on Polygon.
+- **Heartbeat API.** If you use the heartbeat system for market making, a missed heartbeat (>10s) cancels all your resting orders.
 - **Market resolution.** Markets resolve based on the resolution source specified in each market. Check the resolution criteria before trading.
 - **Slippage.** Market orders execute at the best available price, which may differ from the displayed price in fast-moving markets.
 - **Liquidity.** Low-volume markets may have wide bid-ask spreads. Check the order book before placing large orders.
-
-## API Reference
-
-Read-only commands use the public Gamma API (no auth):
-- Base URL: `https://gamma-api.polymarket.com`
-- Events: `GET /events` (params: `order`, `ascending`, `closed`, `limit`, `tag_slug`)
-- Search: `GET /search` (params: `query`, `limit`)
-- Event by slug: `GET /events/slug/{slug}`
-
-Trading commands use the CLOB API:
-- Base URL: `https://clob.polymarket.com`
-- Wrapped by the official [Polymarket CLI](https://github.com/Polymarket/polymarket-cli) (Rust binary)
+- **Bridge funds.** Cross-chain bridging involves smart contract risk. Verify addresses and amounts before confirming.
 
 ## Related Skills
 
